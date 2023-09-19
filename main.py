@@ -191,7 +191,13 @@ def process_data(data_chunk):
 
     return index_to_remove
 
+def async_process_data(args):
+    result = asyncio.run(async_multi_proxy_test(args))
+    #pprint.pprint(result)
+    return result
+
 def run_with_multiprocessing(data, num_processes):
+    start = time.time()
     pool = multiprocessing.Pool(processes=num_processes)
     chunk_size = len(data) // num_processes
     data_chunks = [data[i:i + chunk_size] for i in range(0, len(data), chunk_size)]
@@ -205,17 +211,90 @@ def run_with_multiprocessing(data, num_processes):
 
     for index in reversed(index_to_remove):
         del data[index]
+    end = time.time()
 
     final_store(data)
+    print(f"실행 시간: {end - start}")
+    pprint.pprint(data)
+
+
+def run_with_multiprocessing_and_async(data, num_processes):
+    total = []
+    start = time.time()
+    pool = multiprocessing.Pool(processes=num_processes)
+    chunk_size = len(data) // num_processes
+    data_chunks = [(data[i:i + chunk_size]) for i in range(0, len(data), chunk_size)]
+    tmp = pool.map(async_process_data, data_chunks)
+    if not tmp == []:
+        for i in tmp:
+            total.extend(i)
+    pool.close()
+    pool.join()
+    pprint.pprint(total)
+    end = time.time()
+    print(f"실행 시간: {end - start}")
+    final_store(total)
+
 
 async def async_proxy_test(data, result):
+    start = time.time()
     random.shuffle(data)
     await asyncio.gather(
         *[proxy_test(result, proxy_data=proxy_data) for proxy_data in data],
     )
     pprint.pprint(result)
     final_store(result)
+    end = time.time()
+    print(f"실행 시간: {end - start}")
 
+async def async_multi_proxy_test(data):
+    #pprint.pprint(data)
+    print("프로세서 하나 시작")
+    #time.sleep(100)
+    result = []
+    await asyncio.gather(
+        *[multi_proxy_test(result, proxy_data=proxy_data) for proxy_data in data],
+    )
+    pprint.pprint(result)
+    print("일단 프로세서 하나 끝남")
+    return result
+    #final_store(result)
+
+async def multi_proxy_test(result:list, proxy_data: dict):
+    ip = proxy_data["ip"]
+    port = proxy_data["port"]
+    protocol = proxy_data["protocol"]
+
+    #proxy = {
+    #    "all://": "{}://{}:{}".format(protocol,ip, port)
+    #}
+    proxy = f"{protocol}://{ip}:{port}"
+
+    headers = {'User-Agent': fake_useragent.FakeUserAgent().random}
+    test_url = 'https://api.myip.com/'
+
+    proxy_ssl = ssl.SSLContext(ssl.PROTOCOL_TLS)
+    proxy_ssl.verify_mode = ssl.CERT_REQUIRED
+    proxy_ssl.load_verify_locations(certifi.where())
+
+    transport = AsyncProxyTransport.from_url(proxy, verify=False)
+
+    try:
+        async with AsyncClient(transport=transport) as client:
+            res = await client.get(test_url, headers=headers, timeout=10)
+            logging.debug(res.json())
+            print(res.json())
+            #print(json.dumps(proxy, indent=4, ensure_ascii=False, escape_forward_slashes=False))
+            #print(json.dumps(res.json(), indent=4, ensure_ascii=False, escape_forward_slashes=False))
+    except Exception as e:
+        print(e)
+    else:
+        result.append({
+            "ip": ip,
+            "port": port,
+            "protocol": protocol
+        })
+    return result
 
 async def proxy_test(result:list, proxy_data: dict):
     ip = proxy_data["ip"]
@@ -274,11 +353,12 @@ def load_data():
 
 
 if __name__ == '__main__':
-    result = []
-    html = get_index()
-    parse_proxy_info(html)
+    #result = []
+    #html = get_index()
+    #parse_proxy_info(html)
     #get_proxy(data = load_data())
     data = load_data()
-    #num_processes = 10
+    num_processes = 4
     #run_with_multiprocessing(data, num_processes)
+    #run_with_multiprocessing_and_async(data, num_processes)
     asyncio.run(async_proxy_test(data, result))
